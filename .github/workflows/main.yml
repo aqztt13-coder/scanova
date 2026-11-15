@@ -31,35 +31,51 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet==0.24.1" "packaging<24.0" pypdf requests
 
-      - name: Build Unsigned iOS App via Flet
+      - name: Build Unsigned iOS App & Capture Runner.app
         run: |
           rm -f pyproject.toml
           echo "# Scanova" > README.md
           
-          # كتابة requirements.txt بمكتبات Pure Python المتوافقة 100% مع iOS
           cat << 'EOF' > requirements.txt
           flet
           pypdf
           requests
           EOF
 
-          # اعتراض أمر flutter build ipa وتحويله إلى بناء بدون توقيع (--no-codesign)
+          export WORKSPACE_PATH="$GITHUB_WORKSPACE"
           REAL_FLUTTER=$(which flutter)
           mkdir -p "$HOME/custom_bin"
+
+          # اعتراض أمر flutter build ipa وبناء Runner.app ثم نسخه فوراً قبل أن يغلق المجلد المؤقت
           cat << 'EOF' > "$HOME/custom_bin/flutter"
           #!/bin/bash
           if [[ "$1" == "build" && "$2" == "ipa" ]]; then
-            echo "⚡ Intercepted 'flutter build ipa' -> Running unsigned 'flutter build ios --release --no-codesign'"
+            echo "⚡ Intercepted 'flutter build ipa' -> Building unsigned iOS app..."
             if [ -f "ios/Runner/Info.plist" ]; then
               plutil -replace NSCameraUsageDescription -string "Camera permission for document and QR scanning" ios/Runner/Info.plist || true
               plutil -replace NSPhotoLibraryUsageDescription -string "Photo library access to import documents" ios/Runner/Info.plist || true
               plutil -replace NSPhotoLibraryAddUsageDescription -string "Permission to save scanned documents" ios/Runner/Info.plist || true
             fi
-            exec REAL_FLUTTER_PATH build ios --release --no-codesign
+            
+            # تنفيذ البناء الفعلي بدون توقيع
+            REAL_FLUTTER_PATH build ios --release --no-codesign
+            BUILD_STATUS=$?
+            
+            # نسخ Runner.app فوراً من المجلد المؤقت إلى مجلد المشروع الرئيسي
+            if [ -d "build/ios/iphoneos/Runner.app" ]; then
+              echo "✅ Copying Runner.app to Payload..."
+              mkdir -p "$WORKSPACE_PATH/Payload"
+              cp -r "build/ios/iphoneos/Runner.app" "$WORKSPACE_PATH/Payload/"
+              # إنشاء مجلد ipa وهمي لكي يكمل Flet خطوته الأخيرة بسعادة دون خطأ
+              mkdir -p "build/ios/ipa"
+              touch "build/ios/ipa/Scanova.ipa"
+            fi
+            exit $BUILD_STATUS
           else
             exec REAL_FLUTTER_PATH "$@"
           fi
           EOF
+
           sed -i '' "s|REAL_FLUTTER_PATH|$REAL_FLUTTER|g" "$HOME/custom_bin/flutter"
           chmod +x "$HOME/custom_bin/flutter"
           export PATH="$HOME/custom_bin:$PATH"
@@ -68,23 +84,26 @@ jobs:
             --project "Scanova" \
             --description "Smart Document Scanner and PDF Tools" \
             --org "com.aliturki.scanova" \
-            --verbose
+            --verbose || true
 
-      - name: Package Runner.app into Sideloadly-Ready Scanova.ipa
+      - name: Package Payload into Sideloadly-Ready Scanova.ipa
         run: |
-          APP_PATH=$(find build -name "Runner.app" -o -name "*.app" | grep "iphoneos" | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find build -name "*.app" | head -n 1)
+          if [ ! -d "$GITHUB_WORKSPACE/Payload/Runner.app" ]; then
+            echo "Searching in temporary directories as fallback..."
+            TEMP_APP=$(find /var/folders "$TMPDIR" -name "Runner.app" 2>/dev/null | grep "iphoneos" | head -n 1)
+            if [ -n "$TEMP_APP" ]; then
+              mkdir -p "$GITHUB_WORKSPACE/Payload"
+              cp -r "$TEMP_APP" "$GITHUB_WORKSPACE/Payload/"
+            fi
           fi
 
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ Could not find .app bundle!"
+          if [ ! -d "$GITHUB_WORKSPACE/Payload/Runner.app" ]; then
+            echo "❌ Runner.app was not created! Check the step above for errors."
             exit 1
           fi
 
-          echo "✅ Found compiled app at: $APP_PATH"
-          mkdir -p Payload
-          cp -r "$APP_PATH" Payload/
+          cd "$GITHUB_WORKSPACE"
+          echo "✅ Packaging Payload/Runner.app into Scanova.ipa..."
           zip -r -q Scanova.ipa Payload
           ls -lh Scanova.ipa
 
