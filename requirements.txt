@@ -1,5 +1,3 @@
 flet
-Pillow
 pypdf
-fpdf2
 requests
