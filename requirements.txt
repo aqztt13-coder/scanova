@@ -1,16 +1,5 @@
-dependencies = [
-    "flet==1.1.2",
-    "Pillow>=10.0.0",
-    "pypdf>=5.0.0",
-    "fpdf2>=2.8.0",
-    "cryptography>=42.0.0",
-    "requests>=2.31.0",
-    "numpy>=1.26.0"
-]
-
-[project.optional-dependencies]
-full = [
-    "pymupdf>=1.24.0",
-    "opencv-python>=4.10.0.84",
-    "zxing-cpp"
-]
+flet
+Pillow
+pypdf
+fpdf2
+requests
